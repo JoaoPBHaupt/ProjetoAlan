@@ -1,29 +1,33 @@
 package com.application.service;
 
 
-
 import com.domain.model.Reserva;
 import com.domain.model.StatusReserva;
 import com.infrastructure.repository.ReservaRepository;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
-import org.springframework.web.client.RestTemplate;
+
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
-import java.util.Map;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 @Service
 public class ReservaService {
 
     @Autowired
     private ReservaRepository reservaRepository;
-    
+
     @Autowired
-    private RestTemplate restTemplate;
-    
-    private static final String SALA_SERVICE_URL = "http://sala:8082/api/salas";
-    private static final String USUARIO_SERVICE_URL = "http://usuario:8080/api/usuarios";
+    private UsuarioService usuarioService;
+
+    public ReservaService(ReservaRepository reservaRepository, UsuarioService usuarioService) {
+        this.reservaRepository = reservaRepository;
+        this.usuarioService = usuarioService;
+    }
+
 
     public List<Reserva> findAll() {
         return reservaRepository.findAll();
@@ -39,73 +43,74 @@ public class ReservaService {
 
     public Reserva save(Reserva reserva) {
         try {
-            Map<String, Object> usuario = restTemplate.getForObject(USUARIO_SERVICE_URL + "/" + reserva.getUsuarioId(), Map.class);
-            if (usuario == null) {
-                throw new RuntimeException("Usuário não encontrado");
-            }
-            
-            if (!(Boolean) usuario.get("ativo")) {
-                throw new RuntimeException("Usuário não está ativo");
-            }
-        } catch (Exception e) {
-            throw new RuntimeException("Erro ao verificar usuário: " + e.getMessage());
-        }
+            validacoesBasicas(reserva);
+            validarSeExisteSalaAlocadaNesseIntervalo(reserva);
 
-        try {
-            Map<String, Object> sala = restTemplate.getForObject(SALA_SERVICE_URL + "/" + reserva.getSalaId(), Map.class);
-            if (sala == null) {
-                throw new RuntimeException("Sala não encontrada");
-            }
-            
-            if (!(Boolean) sala.get("disponivel")) {
-                throw new RuntimeException("Sala não está disponível");
-            }
+            boolean usuarioValido = usuarioService.validarUsuario(reserva.getUsuarioId())
+                            .get(5, TimeUnit.SECONDS);
 
-            List<Reserva> reservasExistentes = reservaRepository.findBySalaIdAndDataHoraInicioBetween(
-                reserva.getSalaId(),
-                reserva.getDataHoraInicio(),
-                reserva.getDataHoraFim()
-            );
-
-            if (!reservasExistentes.isEmpty()) {
-                throw new RuntimeException("Já existe uma reserva para este horário");
+            if (!usuarioValido) {
+                throw new RuntimeException("Usuário inválido ou não encontrado");
             }
-
-            restTemplate.put(SALA_SERVICE_URL + "/" + reserva.getSalaId() + "/disponibilidade?disponivel=false", null);
 
             reserva.setStatus(StatusReserva.PENDENTE);
             return reservaRepository.save(reserva);
-        } catch (Exception e) {
-            throw new RuntimeException("Erro ao verificar disponibilidade da sala: " + e.getMessage());
+        } catch (InterruptedException | ExecutionException | TimeoutException e) {
+            throw new RuntimeException("Erro ao salvar reserva: " + e.getMessage());
         }
     }
 
     public void deleteById(Long id) {
         Optional<Reserva> reserva = reservaRepository.findById(id);
-        if (reserva.isPresent()) {
-            try {
-                restTemplate.put(SALA_SERVICE_URL + "/" + reserva.get().getSalaId() + "/disponibilidade?disponivel=true", null);
-            } catch (Exception e) {
-            }
-            reservaRepository.deleteById(id);
+        if (reserva.isEmpty()) {
+            throw new RuntimeException("Reserva não encontrada");
         }
+
+        reservaRepository.deleteById(id);
     }
 
     public Reserva updateStatus(Long id, StatusReserva status) {
-        Optional<Reserva> reservaOpt = reservaRepository.findById(id);
-        if (reservaOpt.isPresent()) {
-            Reserva reserva = reservaOpt.get();
-            
-            if (status == StatusReserva.CANCELADA) {
-                try {
-                    restTemplate.put(SALA_SERVICE_URL + "/" + reserva.getSalaId() + "/disponibilidade?disponivel=true", null);
-                } catch (Exception e) {
-                }
-            }
-            
-            reserva.setStatus(status);
-            return reservaRepository.save(reserva);
+        if (status == null) {
+            throw new RuntimeException("Status não pode ser nulo");
         }
-        return null;
+        if (id == null) {
+            throw new RuntimeException("ID da reserva não pode ser nulo");
+        }
+
+        Optional<Reserva> reservaOpt = reservaRepository.findById(id);
+        if (reservaOpt.isEmpty()) {
+            throw new RuntimeException("Reserva não encontrada");
+        }
+
+
+        Reserva reserva = reservaOpt.get();
+        reserva.setStatus(status);
+        return reservaRepository.save(reserva);
     }
-} 
+
+    private static void validacoesBasicas(Reserva reserva) {
+        if (reserva.getUsuarioId() == null) {
+            throw new RuntimeException("Usuário não informado");
+        }
+
+        if (reserva.getSalaId() == null) {
+            throw new RuntimeException("Sala não informada");
+        }
+
+        if (reserva.getDataHoraInicio().isBefore(LocalDateTime.now())) {
+            throw new RuntimeException("A data e hora de início não podem ser no passado");
+        }
+    }
+
+    private void validarSeExisteSalaAlocadaNesseIntervalo(Reserva reserva) {
+        List<Reserva> reservasExistentes = reservaRepository.findBySalaIdAndDataHoraInicioBetween(
+                reserva.getSalaId(),
+                reserva.getDataHoraInicio(),
+                reserva.getDataHoraFim()
+        );
+
+        if (!reservasExistentes.isEmpty()) {
+            throw new IllegalArgumentException("Já existe uma reserva para este horário");
+        }
+    }
+}

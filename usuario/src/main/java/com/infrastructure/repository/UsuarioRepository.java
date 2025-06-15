@@ -1,7 +1,6 @@
 package com.infrastructure.repository;
 
 
-
 import com.domain.model.TipoUsuario;
 import com.domain.model.Usuario;
 import org.springframework.data.jpa.repository.JpaRepository;

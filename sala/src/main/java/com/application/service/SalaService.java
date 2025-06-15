@@ -36,7 +36,6 @@ public class SalaService {
 
     public Sala update(Long id, Sala sala) {
         if (salaRepository.existsById(id)) {
-            sala.setId(id);
             return salaRepository.save(sala);
         }
         return null;

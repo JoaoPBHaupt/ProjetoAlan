@@ -15,11 +15,8 @@ public class UsuarioService {
 
     @Autowired
     private UsuarioRepository usuarioRepository;
+
     
-    @Autowired
-    private RestTemplate restTemplate;
-    
-    private static final String RESERVA_SERVICE_URL = "http://reserva-sala:8081/api/reservas";
 
     public List<Usuario> findAll() {
         return usuarioRepository.findAll();
@@ -51,14 +48,6 @@ public class UsuarioService {
     }
 
     public void deleteById(Long id) {
-        try {
-            List<?> reservas = restTemplate.getForObject(RESERVA_SERVICE_URL + "/usuario/" + id, List.class);
-            if (reservas != null && !reservas.isEmpty()) {
-                throw new RuntimeException("Não é possível excluir o usuário pois ele possui reservas");
-            }
-        } catch (Exception e) {
-        }
-        
         usuarioRepository.deleteById(id);
     }
 
